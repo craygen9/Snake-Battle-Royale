@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake Battle Royale</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #111;
+  color: #eee;
+  font-family: monospace;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 12px;
+}
+canvas {
+  border: 1px solid #333;
+  display: block;
+  margin: 10px auto;
+}
+#scores {
+  font-size: 14px;
+  letter-spacing: 1px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  justify-content: center;
+  max-width: 520px;
+  min-height: 20px;
+}
+#controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.numInput {
+  width: 52px;
+  padding: 8px 6px;
+  font-size: 16px;
+  font-family: monospace;
+  background: #222;
+  color: #eee;
+  border: 1px solid #555;
+  text-align: center;
+}
+label { font-size: 14px; }
+#startBtn, #turboBtn {
+  padding: 10px 30px;
+  font-size: 16px;
+  font-family: monospace;
+  background: #222;
+  color: #eee;
+  border: 1px solid #555;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#startBtn:hover, #turboBtn:hover { background: #333; }
+#turboBtn.active { background: #a22; border-color: #f44; }
+</style>
+</head>
+<body>
+<div id="scores"></div>
+<canvas id="game" width="500" height="500"></canvas>
+<div id="controls">
+  <label for="numSnakes">Snakes:</label>
+  <input type="number" id="numSnakes" class="numInput" min="1" value="4">
+  <label for="numApples">Apples:</label>
+  <input type="number" id="numApples" class="numInput" min="1" max="30" value="3">
+  <button id="startBtn">Start</button>
+  <button id="turboBtn">Turbo</button>
+</div>
+<script>
+var canvas = document.getElementById('game');
+var ctx = canvas.getContext('2d');
+var scoresEl = document.getElementById('scores');
+var startBtn = document.getElementById('startBtn');
+var turboBtn = document.getElementById('turboBtn');
+var numSnakesInput = document.getElementById('numSnakes');
+var numApplesInput = document.getElementById('numApples');
+var grid = 20;
+var tiles = canvas.width / grid;
+var snakes, apples, appleCount, timer;
+var currentSpeed = 90;
+
+turboBtn.addEventListener('click', function() {
+  var isTurbo = turboBtn.classList.toggle('active');
+  currentSpeed = isTurbo ? 18 : 90;
+  if (timer && startBtn.style.display === 'none') {
+    clearInterval(timer);
+    timer = setInterval(update, currentSpeed);
+  }
+});
+
+function hsl(h, s, l) { return 'hsl(' + h + ',' + s + '%,' + l + '%)'; }
+
+function snakeColor(i, n) {
+  var h = Math.round((360 / n) * i);
+  return { hc: hsl(h, 80, 65), bc: hsl(h, 50, 40) };
+}
+
+function spawnPos(i, n) {
+  var margin = 3;
+  var cx = Math.floor(tiles / 2);
+  var cy = Math.floor(tiles / 2);
+  var angle = (2 * Math.PI / n) * i - Math.PI / 2;
+  var r = Math.floor(tiles / 2) - margin;
+  var x = Math.round(cx + r * Math.cos(angle));
+  var y = Math.round(cy + r * Math.sin(angle));
+  x = Math.max(1, Math.min(tiles - 2, x));
+  y = Math.max(1, Math.min(tiles - 2, y));
+  var dx = cx - x;
+  var dy = cy - y;
+  var len = Math.sqrt(dx * dx + dy * dy) || 1;
+  dx = Math.round(dx / len);
+  dy = Math.round(dy / len);
+  if (dx === 0 && dy === 0) dx = 1;
+  return { x: x, y: y, dx: dx, dy: dy };
+}
+
+function occMap() {
+  var occ = {};
+  for (var s = 0; s < snakes.length; s++) {
+    for (var i = 0; i < snakes[s].cells.length; i++)
+      occ[snakes[s].cells[i].x + ',' + snakes[s].cells[i].y] = true;
+  }
+  for (var a = 0; a < apples.length; a++)
+    occ[apples[a].x + ',' + apples[a].y] = true;
+  return occ;
+}
+
+function placeOneApple() {
+  var occ = occMap();
+  var tries = 0;
+  while (tries < 1000) {
+    var pos = { x: Math.floor(Math.random() * tiles), y: Math.floor(Math.random() * tiles) };
+    if (!occ[pos.x + ',' + pos.y]) { apples.push(pos); return; }
+    tries++;
+  }
+}
+
+function init() {
+  var n = parseInt(numSnakesInput.value) || 2;
+  n = Math.max(1, n);
+  numSnakesInput.value = n;
+  appleCount = parseInt(numApplesInput.value) || 1;
+  appleCount = Math.max(1, Math.min(30, appleCount));
+  numApplesInput.value = appleCount;
+  snakes = [];
+  apples = [];
+  for (var i = 0; i < n; i++) {
+    var col = snakeColor(i, n);
+    var sp = spawnPos(i, n);
+    snakes.push({
+      cells: [{ x: sp.x, y: sp.y }],
+      dir: { x: sp.dx, y: sp.dy },
+      score: 0,
+      alive: true,
+      hc: col.hc,
+      bc: col.bc,
+      id: i
+    });
+  }
+  for (var a = 0; a < appleCount; a++) placeOneApple();
+  updateScores();
+  startBtn.style.display = 'none';
+  numSnakesInput.style.display = 'none';
+  numApplesInput.style.display = 'none';
+  var labels = document.querySelectorAll('label');
+  for (var i = 0; i < labels.length; i++) labels[i].style.display = 'none';
+  if (timer) clearInterval(timer);
+  timer = setInterval(update, currentSpeed);
+}
+
+function updateScores() {
+  var html = '';
+  for (var i = 0; i < snakes.length; i++) {
+    var opacity = snakes[i].alive ? '1' : '0.35';
+    html += '<span style="color:' + snakes[i].hc + ';opacity:' + opacity + '">' + snakes[i].score + '</span>';
+  }
+  scoresEl.innerHTML = html;
+}
+
+function safe(x, y) {
+  if (x < 0 || x >= tiles || y < 0 || y >= tiles) return false;
+  for (var s = 0; s < snakes.length; s++) {
+    if (!snakes[s].alive) continue;
+    for (var i = 0; i < snakes[s].cells.length; i++) {
+      if (snakes[s].cells[i].x === x && snakes[s].cells[i].y === y) return false;
+    }
+  }
+  return true;
+}
+
+function floodCount(sx, sy) {
+  var visited = {};
+  var stack = [{ x: sx, y: sy }];
+  var count = 0;
+  visited[sx + ',' + sy] = true;
+  for (var s = 0; s < snakes.length; s++) {
+    if (!snakes[s].alive) continue;
+    for (var i = 0; i < snakes[s].cells.length; i++)
+      visited[snakes[s].cells[i].x + ',' + snakes[s].cells[i].y] = true;
+  }
+  while (stack.length > 0 && count < 120) {
+    var c = stack.pop();
+    count++;
+    var nb = [{ x:c.x+1,y:c.y },{ x:c.x-1,y:c.y },{ x:c.x,y:c.y+1 },{ x:c.x,y:c.y-1 }];
+    for (var j = 0; j < nb.length; j++) {
+      var n = nb[j];
+      var key = n.x + ',' + n.y;
+      if (n.x >= 0 && n.x < tiles && n.y >= 0 && n.y < tiles && !visited[key]) {
+        visited[key] = true;
+        stack.push(n);
+      }
+    }
+  }
+  return count;
+}
+
+function bestTargetApple(hx, hy, si) {
+  var best = null;
+  var bestScore = Infinity;
+  for (var a = 0; a < apples.length; a++) {
+    var d = Math.abs(hx - apples[a].x) + Math.abs(hy - apples[a].y);
+    var penalty = 0;
+    for (var o = 0; o < snakes.length; o++) {
+      if (o === si || !snakes[o].alive) continue;
+      var od = Math.abs(snakes[o].cells[0].x - apples[a].x) + Math.abs(snakes[o].cells[0].y - apples[a].y);
+      if (od < d) penalty += 20; // high penalty if someone else is closer
+      else if (od === d) penalty += 5; // slight penalty for a tie
+    }
+    var score = d + penalty;
+    if (score < bestScore) { bestScore = score; best = apples[a]; }
+  }
+  return best;
+}
+
+function isRisky(x, y, si) {
+  for (var o = 0; o < snakes.length; o++) {
+    if (o === si || !snakes[o].alive) continue;
+    var ox = snakes[o].cells[0].x;
+    var oy = snakes[o].cells[0].y;
+    // Check if another snake's head could move here next turn
+    if (Math.abs(x - ox) + Math.abs(y - oy) === 1) return true; 
+  }
+  return false;
+}
+
+function chooseDir(si) {
+  var s = snakes[si];
+  var h = s.cells[0];
+  var target = bestTargetApple(h.x, h.y, si) || { x: Math.floor(tiles / 2), y: Math.floor(tiles / 2) };
+  var dirs = [{ x:0,y:-1 },{ x:0,y:1 },{ x:-1,y:0 },{ x:1,y:0 }];
+  var safeDirs = [];
+  
+  for (var i = 0; i < dirs.length; i++) {
+    var d = dirs[i];
+    if (s.cells.length > 1 && d.x === -s.dir.x && d.y === -s.dir.y) continue;
+    if (safe(h.x + d.x, h.y + d.y)) safeDirs.push(d);
+  }
+  
+  if (safeDirs.length === 0) return;
+  
+  var best = null;
+  var bestScore = -Infinity;
+  
+  for (var i = 0; i < safeDirs.length; i++) {
+    var d = safeDirs[i];
+    var nx = h.x + d.x;
+    var ny = h.y + d.y;
+    
+    var distToTarget = Math.abs(nx - target.x) + Math.abs(ny - target.y);
+    var fcount = floodCount(nx, ny);
+    var risky = isRisky(nx, ny, si);
+    var score = -distToTarget;
+    
+    if (fcount < s.cells.length + 2) {
+       score -= (1000 - fcount); 
+    } else {
+       score += Math.min(fcount, 50) * 0.1;
+    }
+    
+    if (risky) score -= 100;
+    
+    if (score > bestScore) {
+      bestScore = score;
+      best = d;
+    }
+  }
+  
+  if (best) s.dir = best;
+}
+
+function update() {
+  for (var s = 0; s < snakes.length; s++) {
+    if (snakes[s].alive) chooseDir(s);
+  }
+
+  var heads = [];
+  for (var s = 0; s < snakes.length; s++) {
+    if (snakes[s].alive) {
+      heads[s] = { x: snakes[s].cells[0].x + snakes[s].dir.x, y: snakes[s].cells[0].y + snakes[s].dir.y };
+    } else {
+      heads[s] = null;
+    }
+  }
+
+  for (var a = 0; a < snakes.length; a++) {
+    if (!heads[a]) continue;
+    for (var b = a + 1; b < snakes.length; b++) {
+      if (!heads[b]) continue;
+      if (heads[a].x === heads[b].x && heads[a].y === heads[b].y) {
+        snakes[a].alive = false;
+        snakes[b].alive = false;
+      }
+    }
+  }
+
+  for (var s = 0; s < snakes.length; s++) {
+    if (!snakes[s].alive) continue;
+    var h = heads[s];
+    if (h.x < 0 || h.x >= tiles || h.y < 0 || h.y >= tiles) { snakes[s].alive = false; continue; }
+    var hit = false;
+    for (var o = 0; o < snakes.length; o++) {
+      if (!snakes[o].alive) continue;
+      for (var i = 0; i < snakes[o].cells.length; i++) {
+        if (snakes[o].cells[i].x === h.x && snakes[o].cells[i].y === h.y) { hit = true; break; }
+      }
+      if (hit) break;
+    }
+    if (hit) { snakes[s].alive = false; continue; }
+    snakes[s].cells.unshift(h);
+    var ate = false;
+    for (var a = 0; a < apples.length; a++) {
+      if (h.x === apples[a].x && h.y === apples[a].y) {
+        snakes[s].score++;
+        apples.splice(a, 1);
+        ate = true;
+        break;
+      }
+    }
+    if (!ate) snakes[s].cells.pop();
+  }
+
+  while (apples.length < appleCount) placeOneApple();
+
+  updateScores();
+  draw();
+
+  var aliveCount = 0;
+  for (var s = 0; s < snakes.length; s++) {
+    if (snakes[s].alive) aliveCount++;
+  }
+  if (aliveCount === 0 || (snakes.length > 1 && aliveCount <= 1)) {
+    if (aliveCount === 1) {
+      for (var s = 0; s < snakes.length; s++) {
+        if (snakes[s].alive) snakes[s].score += 3;
+      }
+      updateScores();
+    }
+    clearInterval(timer);
+    draw();
+    gameOver();
+  }
+}
+
+function draw() {
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  for (var s = 0; s < snakes.length; s++) {
+    if (snakes[s].alive) continue;
+    for (var i = 0; i < snakes[s].cells.length; i++) {
+      ctx.fillStyle = '#262626';
+      ctx.fillRect(snakes[s].cells[i].x * grid + 1, snakes[s].cells[i].y * grid + 1, grid - 2, grid - 2);
+    }
+  }
+  
+  for (var s = 0; s < snakes.length; s++) {
+    if (!snakes[s].alive) continue;
+    for (var i = 0; i < snakes[s].cells.length; i++) {
+      ctx.fillStyle = i === 0 ? snakes[s].hc : snakes[s].bc;
+      ctx.fillRect(snakes[s].cells[i].x * grid + 1, snakes[s].cells[i].y * grid + 1, grid - 2, grid - 2);
+    }
+  }
+  
+  for (var a = 0; a < apples.length; a++) {
+    ctx.fillStyle = '#e55';
+    ctx.beginPath();
+    ctx.arc(apples[a].x * grid + grid / 2, apples[a].y * grid + grid / 2, grid / 2 - 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function gameOver() {
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.textAlign = 'center';
+  var sorted = snakes.slice().sort(function(a, b) { return b.score - a.score; });
+  ctx.font = '22px monospace';
+  if (snakes.length === 1) {
+    ctx.fillStyle = '#eee';
+    ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 50);
+    ctx.font = '16px monospace';
+    ctx.fillText('Score: ' + sorted[0].score, canvas.width / 2, canvas.height / 2 - 22);
+  } else {
+    ctx.fillStyle = sorted[0].hc;
+    var startY = canvas.height / 2 - (sorted.length * 20) / 2;
+    ctx.fillText('Snake #' + (sorted[0].id + 1) + ' Wins!', canvas.width / 2, startY - 30);
+    ctx.font = '14px monospace';
+    for (var i = 0; i < sorted.length; i++) {
+      ctx.fillStyle = sorted[i].hc;
+      var tag = (i === 0 ? '\u2605 ' : '  ') + '#' + (sorted[i].id + 1) + ': ' + sorted[i].score + ' pts';
+      ctx.fillText(tag, canvas.width / 2, startY + i * 20);
+    }
+  }
+  startBtn.style.display = 'inline-block';
+  startBtn.textContent = 'Restart';
+  numSnakesInput.style.display = 'inline-block';
+  numApplesInput.style.display = 'inline-block';
+  var labels = document.querySelectorAll('label');
+  for (var i = 0; i < labels.length; i++) labels[i].style.display = 'inline';
+}
+
+startBtn.addEventListener('click', init);
+ctx.fillStyle = '#111';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+ctx.fillStyle = '#555';
+ctx.font = '16px monospace';
+ctx.textAlign = 'center';
+ctx.fillText('Choose snakes & apples', canvas.width / 2, canvas.height / 2 - 10);
+ctx.fillText('and press Start', canvas.width / 2, canvas.height / 2 + 14);
+</script>
+</body>
+</html>
